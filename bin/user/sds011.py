@@ -4,13 +4,15 @@
 
 """Driver for collecting data from SDS011 particulate sensor.
 
-Credits:
+Apparently if you poll the device too often you will get bogus data.
 
-2017 Martin Lutzelberger
-  https://github.com/luetzel/sds011/blob/master/sds011_pylab.py
+Credits:
 
 2016 Frank Heuer
   https://gitlab.com/frankrich/sds011_particle_sensor
+
+2017 Martin Lutzelberger
+  https://github.com/luetzel/sds011/blob/master/sds011_pylab.py
 
 2018 zefanja
   https://github.com/zefanja/aqi/
@@ -28,8 +30,13 @@ DRIVER_NAME = 'SDS011'
 DRIVER_VERSION = '0.1'
 
 
+printlog = False
+
 def logmsg(dst, msg):
-    syslog.syslog(dst, 'SDS011: %s' % msg)
+    msg = 'SDS011: %s' % msg
+    if printlog:
+        print(msg)
+    syslog.syslog(dst, msg)
 
 def logdbg(msg):
     logmsg(syslog.LOG_DEBUG, msg)
@@ -42,10 +49,19 @@ def logerr(msg):
 
 
 def loader(config_dict, _):
-    return CM1Driver(**config_dict[DRIVER_NAME])
+    return SDS011Driver(**config_dict[DRIVER_NAME])
 
 def confeditor_loader():
     return SDS011ConfEditor()
+
+
+schema = [
+    ('dateTime', 'INTEGER NOT NULL PRIMARY KEY'),
+    ('usUnits', 'INTEGER NOT NULL'),
+    ('interval', 'INTEGER NOT NULL'),
+    ('pm25', 'REAL'),
+    ('pm10', 'REAL'),
+]
 
 
 class SDS011ConfEditor(weewx.drivers.AbstractConfEditor):
@@ -59,7 +75,7 @@ class SDS011ConfEditor(weewx.drivers.AbstractConfEditor):
 
     port = /dev/ttyUSB0
 
-    # How often to poll the device, in seconds
+    # How often to poll the device, in seconds (do not set lower than 10)
     poll_interval = 10
 
     # The driver to use
@@ -82,38 +98,40 @@ class SDS011Driver(weewx.drivers.AbstractDevice):
         port = stn_dict.get('port', SDS011.DEFAULT_PORT)
         loginf("port is %s" % port)
         timeout = int(stn_dict.get('timeout', SDS011.DEFAULT_TIMEOUT))
-        self.poll_interval = int(stn_dict.get('poll_interval', 10))
+        self.poll_interval = int(stn_dict.get('poll_interval', 30))
         loginf("poll interval is %s" % self.poll_interval)
+        if self.poll_interval < 10:
+            loginf("warning: short poll interval may result in bad data")
         self.max_tries = int(stn_dict.get('max_tries', 3))
         self.retry_wait = int(stn_dict.get('retry_wait', 5))
         self.sensor = SDS011(port, timeout)
+        self.sensor.open()
 
     @property
     def hardware_name(self):
         return self.model
 
     def closePort(self):
-        self.station.serial.close()
-        self.station = None
+        self.sensor.close()
+        self.sensor = None
 
     def genLoopPackets(self):
         while True:
-            data = self._get_with_retries('get_current')
-            logdbg("raw data: %s" % data)
+            pm25, pm10 = self._get_with_retries()
+            logdbg("data: %s %s" % (pm25, pm10))
             pkt = dict()
             pkt['dateTime'] = int(time.time() + 0.5)
             pkt['usUnits'] = weewx.METRICWX
-            for k in self.sensor_map:
-                if self.sensor_map[k] in data:
-                    pkt[k] = data[self.sensor_map[k]]
+            pkt['pm25'] = pm25
+            pkt['pm10'] = pm10
             yield pkt
             if self.poll_interval:
                 time.sleep(self.poll_interval)
 
-    def _get_with_retries(self, method):
+    def _get_with_retries(self):
         for n in range(self.max_tries):
             try:
-                return getattr(self.station, method)()
+                return self.sensor.get_data()
             except (IOError, ValueError, TypeError), e:
                 loginf("failed attempt %s of %s: %s" %
                        (n + 1, self.max_tries, e))
@@ -131,6 +149,14 @@ class SDS011(object):
     DEFAULT_PORT = '/dev/ttyUSB0'
     DEFAULT_BAUDRATE = 9600
     DEFAULT_TIMEOUT = 3.0 # seconds
+    CMD_MODE = 2
+    CMD_QUERY_DATA = 4
+    CMD_DEVICE_ID = 5
+    CMD_SLEEP = 6
+    CMD_FIRMWARE = 7
+    CMD_WORKING_PERIOD = 8
+    MODE_ACTIVE = 0
+    MODE_QUERY = 1
 
     def __init__(self, port, timeout=DEFAULT_TIMEOUT):
         self.port = port
@@ -139,10 +165,11 @@ class SDS011(object):
         self.serial_port = None
 
     def __enter__(self):
+        self.open()
         return self
 
     def __exit__(self, _, value, traceback):
-        pass
+        self.close()
 
     def open(self):
         import serial
@@ -157,71 +184,89 @@ class SDS011(object):
             self.serial_port.close()
             self.serial_port = None
 
-    def sensor_wake(self):
-        cmd = ['\xaa', # head
-               '\xb4', # command 1
-               '\x06', # data byte 1
-               '\x01', # data byte 2 (set mode)
-               '\x01', # data byte 3 (sleep)
-               '\x00', # data byte 4
-               '\x00', # data byte 5
-               '\x00', # data byte 6
-               '\x00', # data byte 7
-               '\x00', # data byte 8
-               '\x00', # data byte 9
-               '\x00', # data byte 10
-               '\x00', # data byte 11
-               '\x00', # data byte 12
-               '\x00', # data byte 13
-               '\xff', # data byte 14 (device id byte 1)
-               '\xff', # data byte 15 (device id byte 2)
-               '\x05', # checksum
-               '\xab'] # tail
-        for b in cmd:
-            self.serial_port.write(b)
+    @staticmethod
+    def _chksum(raw):
+        return sum(ord(v) for v in raw[2:8]) % 256
 
-    def sensor_sleep(self):
-        cmd = ['\xaa', # head
-               '\xb4', # command 1
-               '\x06', # data byte 1
-               '\x01', # data byte 2 (set mode)
-               '\x00', # data byte 3 (sleep)
-               '\x00', # data byte 4
-               '\x00', # data byte 5
-               '\x00', # data byte 6
-               '\x00', # data byte 7
-               '\x00', # data byte 8
-               '\x00', # data byte 9
-               '\x00', # data byte 10
-               '\x00', # data byte 11
-               '\x00', # data byte 12
-               '\x00', # data byte 13
-               '\xff', # data byte 14 (device id byte 1)
-               '\xff', # data byte 15 (device id byte 2)
-               '\x05', # checksum
-               '\xab'] # tail
-        for b in cmd:
-            self.serial_port.write(b)
+    @staticmethod
+    def _cmd(cmd, data=[]):
+        # a command is a string of 19 bytes with this format:
+        #
+        # 0xaa 0xb4 cmd data 0xff 0xff chksum 0xab
+        #
+        # where:
+        #  cmd is a single byte
+        #  data is 12 bytes or less
+        #  chksum is a single byte
+        data += [0,] * (12 - len(data))
+        chksum = (sum(data) + cmd - 2) % 256
+        ret = "\xaa\xb4" + chr(cmd)
+        ret += ''.join(chr(x) for x in data)
+        ret += "\xff\xff" + chr(chksum) + "\xab"
+        return ret
 
-    def sensor_read(self):
+    @staticmethod
+    def parse_data(raw):
+        r = struct.unpack('<HHxxBB', raw[2:])
+        pm25 = r[0] / 10.0 # ug/m^3
+        pm10 = r[1] / 10.0 # ug/m^3
+        chksum = SDS011._chksum(raw)
+        return [pm25, pm10]
+
+    @staticmethod
+    def parse_version(raw):
+        r = struct.unpack('<BBBHBB', raw[3:])
+        fwver = "20%s-%s-%s %s" % (r[0], r[1], r[2], hex(r[3]))
+        chksum = SDS011._chksum(raw)
+        return fwver
+
+    def write_command(self, cmd, data=[]):
+        x = SDS011._cmd(cmd, data)
+        logdbg("write: %s" % _fmt(x))
+        self.serial_port.write(x)
+
+    def read_bytes(self):
         x = 0
         while x != "\xaa":
             x = self.serial_port.read(size=1)
-            data = self.serial_port.read(size=10)
-            print _fmt(data)
-            if data[0] == "\xc0":
-                return x + data
-        return None
+        data = self.serial_port.read(size=9)
+        logdbg("read: %s" % _fmt(data))
+        return x + data
 
-    def get_current(self):
-        data = dict()
-        raw = self.sensor_read()
-        if raw:
-            r = struct.unpack('<HHxxBBB', raw[2:])
-            checksum = sum(ord(v) for v in raw[2:8]) % 256
-            data['pm25'] = r[0] / 10.0
-            data['pm10'] = r[1] / 10.0
-        return data
+    def get_firmware_version(self):
+        self.write_command(SDS011.CMD_FIRMWARE)
+        raw = self.read_bytes()
+        return SDS011.parse_version(raw)
+
+    def get_data(self):
+        self.write_command(SDS011.CMD_QUERY_DATA)
+        raw = self.read_bytes()
+        return SDS011.parse_data(raw)
+
+    def set_sleep(self, period=1):
+        mode = 0 if period else 1
+        self.write_command(SDS011.CMD_SLEEP, [0x1, mode])
+        raw = self.read_bytes()
+
+    def set_working_period(self, period):
+        self.write_command(SDS011.CMD_WORKING_PERIOD, [0x1, period])
+        raw = self.read_bytes()
+
+    def set_mode(self, mode=MODE_QUERY):
+        self.write_command(SDS011.CMD_MODE, [0x1, mode])
+        raw = self.read_bytes()
+
+    def set_id(self, device_id):
+        id_hi = (device_id >> 8) % 256
+        id_lo = device_id % 256
+        self.write_command(SDS011.CMD_DEVICE_ID, [0] * 10 + [id_lo, id_hi])
+        raw = self.read_bytes()
+
+    def sensor_wake(self):
+        self.set_sleep(0)
+
+    def sensor_sleep(self):
+        self.set_sleep(1)
 
 
 if __name__ == '__main__':
@@ -239,8 +284,20 @@ if __name__ == '__main__':
                       help='serial port to which the station is connected',
                       default=SDS011.DEFAULT_PORT)
     parser.add_option('--timeout', dest='timeout', metavar='TIMEOUT',
-                      help='modbus timeout, in seconds', type=int,
+                      help='serial timeout, in seconds', type=int,
                       default=SDS011.DEFAULT_TIMEOUT)
+    parser.add_option('--poll-interval', metavar='PERIOD', type=int, default=10,
+                      help='how often to poll for data, in seconds')
+    parser.add_option('--info', action='store_true',
+                      help='display device information')
+    parser.add_option('--set-id', metavar='ID', type=int, dest='device_id',
+                      help='set device identifier')
+    parser.add_option('--set-mode', metavar='MODE', dest='device_mode',
+                      help='set the mode to active or query')
+    parser.add_option('--set-sleep', metavar='PERIOD', type=int, dest='sleep',
+                      help='set sleep period, in seconds')
+    parser.add_option('--set-work', metavar='PERIOD', type=int, dest='work',
+                      help='set working period, in seconds')
     (options, _) = parser.parse_args()
 
     if options.version:
@@ -248,16 +305,33 @@ if __name__ == '__main__':
         exit(1)
 
     if options.debug is not None:
+        printlog = True
         syslog.setlogmask(syslog.LOG_UPTO(syslog.LOG_DEBUG))
     else:
         syslog.setlogmask(syslog.LOG_UPTO(syslog.LOG_INFO))
 
     s = SDS011(options.port, options.timeout)
     s.open()
-    while True:
-        print "wake sensor"
-        s.sensor_wake()
-        print "wait 10 seconds"
-        time.sleep(10)
-        print "read sensor"
-        print s.get_current()
+
+    if options.info:
+        print("firmware: %s" % s.get_firmware_version())
+        exit(0)
+
+    if options.device_id is not None:
+        print("set id to %s" % options.device_id)
+        s.set_id(options.device_id)
+    elif options.device_mode is not None:
+        print("set mode to %s" % options.device_mode)
+        s.set_mode(options.device_mode)
+    elif options.sleep is not None:
+        print("set sleep to %s" % options.sleep)
+        s.set_sleep(options.sleep)
+    elif options.work is not None:
+        print("set work to %s" % options.work)
+        s.set_work(options.work)
+    else:
+        while True:
+            s.sensor_wake()
+            time.sleep(options.poll_interval)
+            pm25, pm10 = s.get_data()
+            print("pm25=%s pm10=%s" % (pm25, pm10))
