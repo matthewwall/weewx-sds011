@@ -10,27 +10,17 @@ Installation
 
 0) Install weeWX (see weewx.com for details)
 
-sudo apt-get install weewx
-
 1) Download the SDS011 extension
 
 wget -O weewx-sds011.zip https://github.com/matthewwall/weewx-sds011/archive/master.zip
 
-2) Install the SDS011 extension
+2) Install the extension
 
 wee_extension --install weewx-sds011.zip
 
-3a) Configure SDS011 extension as a driver.  In this configuration, the
-    extension will be the primary data source.
+3) Configure the driver
 
 wee_config --reconfigure
-
-3b) Configure SDS011 extension as a service.  In this configuration, the
-    extension will augment data from another data source.
-
-[Engine]
-    [[Services]]
-        data_services = user.sds011.SDS011
 
 4) start weewx
 

@@ -16,8 +16,17 @@ class SDS011Installer(ExtensionInstaller):
             author="Matthew Wall",
             author_email="mwall@users.sourceforge.net",
             config={
-                'SDS011': {
-                    }
+                'SDS011': { },
+                'DataBindings': {
+                    'pm_binding': {
+                        'database': 'pm_sqlite',
+                        'table_name': 'archive',
+                        'manager': 'weewx.manager.DaySummaryManager',
+                        'schema': 'user.sds011.schema'}},
+                'Databases': {
+                    'pm_sqlite': {
+                        'database_name': 'pm.sdb',
+                        'driver': 'weedb.sqlite'}},
                 },
             files=[('bin/user', ['bin/user/sds011.py'])]
             )
