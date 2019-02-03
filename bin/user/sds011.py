@@ -59,8 +59,8 @@ schema = [
     ('dateTime', 'INTEGER NOT NULL PRIMARY KEY'),
     ('usUnits', 'INTEGER NOT NULL'),
     ('interval', 'INTEGER NOT NULL'),
-    ('pm25', 'REAL'),
-    ('pm10', 'REAL'),
+    ('pm2_5', 'REAL'),
+    ('pm10_0', 'REAL'),
 ]
 
 
@@ -117,13 +117,13 @@ class SDS011Driver(weewx.drivers.AbstractDevice):
 
     def genLoopPackets(self):
         while True:
-            pm25, pm10 = self._get_with_retries()
-            logdbg("data: %s %s" % (pm25, pm10))
+            pm2_5, pm10_0 = self._get_with_retries()
+            logdbg("data: %s %s" % (pm2_5, pm10_0))
             pkt = dict()
             pkt['dateTime'] = int(time.time() + 0.5)
             pkt['usUnits'] = weewx.METRICWX
-            pkt['pm25'] = pm25
-            pkt['pm10'] = pm10
+            pkt['pm2_5'] = pm2_5
+            pkt['pm10_0'] = pm10_0
             yield pkt
             if self.poll_interval:
                 time.sleep(self.poll_interval)
@@ -208,10 +208,10 @@ class SDS011(object):
     @staticmethod
     def parse_data(raw):
         r = struct.unpack('<HHxxBB', raw[2:])
-        pm25 = r[0] / 10.0 # ug/m^3
-        pm10 = r[1] / 10.0 # ug/m^3
+        pm2_5 = r[0] / 10.0 # ug/m^3
+        pm10_0 = r[1] / 10.0 # ug/m^3
         chksum = SDS011._chksum(raw)
-        return [pm25, pm10]
+        return [pm2_5, pm10_0]
 
     @staticmethod
     def parse_version(raw):
@@ -333,5 +333,5 @@ if __name__ == '__main__':
         while True:
             s.sensor_wake()
             time.sleep(options.poll_interval)
-            pm25, pm10 = s.get_data()
-            print("pm25=%s pm10=%s" % (pm25, pm10))
+            pm2_5, pm10_0 = s.get_data()
+            print("pm2_5=%s pm10_0=%s" % (pm2_5, pm10_0))
