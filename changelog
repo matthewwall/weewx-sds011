@@ -1,2 +1,5 @@
+0.2 27jun2019
+* fix install setup to not place a blank SDS011 stanza
+
 0.1 02feb2019
 * initial release

@@ -10,13 +10,12 @@ def loader():
 class SDS011Installer(ExtensionInstaller):
     def __init__(self):
         super(SDS011Installer, self).__init__(
-            version="0.1",
+            version="0.2",
             name='sds011',
             description='Collect data from SDS011 particulate sensor',
             author="Matthew Wall",
             author_email="mwall@users.sourceforge.net",
             config={
-                'SDS011': { },
                 'DataBindings': {
                     'pm_binding': {
                         'database': 'pm_sqlite',
