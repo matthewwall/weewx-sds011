@@ -24,6 +24,7 @@ import time
 
 import weewx
 import weewx.drivers
+import weewx.units
 
 
 DRIVER_NAME = 'SDS011'
@@ -63,6 +64,16 @@ schema = [
     ('pm10_0', 'REAL'),
 ]
 
+# set up appropriate units
+weewx.units.USUnits['group_concentration'] = 'microgram_per_meter_cubed'
+weewx.units.MetricUnits['group_concentration'] = 'microgram_per_meter_cubed'
+weewx.units.MetricWXUnits['group_concentration'] = 'microgram_per_meter_cubed'
+weewx.units.default_unit_format_dict['microgram_per_meter_cubed'] = '%.3f'
+weewx.units.default_unit_label_dict['microgram_per_meter_cubed']  = ' \xc2\xb5g/m\xc2\xb3'
+
+# assign types of units to specific measurements
+weewx.units.obs_group_dict['pm2_5'] = 'group_concentration'
+weewx.units.obs_group_dict['pm10_0'] = 'group_concentration'
 
 class SDS011ConfEditor(weewx.drivers.AbstractConfEditor):
     @property
